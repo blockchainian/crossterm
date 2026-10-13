@@ -2,7 +2,7 @@ use std::io;
 
 use crate::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, KeyboardEnhancementFlags,
-    MediaKeyCode, ModifierKeyCode, MouseButton, MouseEvent, MouseEventKind,
+    MediaKeyCode, ModifierKeyCode, MouseButton, MouseEvent, MouseEventKind, Theme,
 };
 
 use super::super::super::InternalEvent;
@@ -180,6 +180,14 @@ pub(crate) fn parse_csi(buffer: &[u8]) -> io::Result<Option<InternalEvent>> {
         b'?' => match buffer[buffer.len() - 1] {
             b'u' => return parse_csi_keyboard_enhancement_flags(buffer),
             b'c' => return parse_csi_primary_device_attributes(buffer),
+            b'n' => {
+                let theme = match buffer {
+                    b"\x1B[?997;1n" => Theme::Dark,
+                    b"\x1B[?997;2n" => Theme::Light,
+                    _ => return Err(could_not_parse_event_error()),
+                };
+                Some(Event::ThemeChanged(theme))
+            }
             _ => None,
         },
         b'0'..=b'9' => {
@@ -866,6 +874,55 @@ mod tests {
     use crate::event::{KeyEventState, KeyModifiers, MouseButton, MouseEvent};
 
     use super::*;
+
+    #[test]
+    fn test_parse_theme_change_reports() {
+        for (report, theme) in [
+            (b"\x1B[?997;1n", crate::event::Theme::Dark),
+            (b"\x1B[?997;2n", crate::event::Theme::Light),
+        ] {
+            assert_eq!(
+                parse_event(report, false).unwrap(),
+                Some(InternalEvent::Event(Event::ThemeChanged(theme))),
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_theme_change_followed_by_key() {
+        let input = b"\x1B[?997;1nj";
+        let mut buffer = Vec::new();
+        let mut events = Vec::new();
+        for (index, byte) in input.iter().enumerate() {
+            buffer.push(*byte);
+            if let Some(event) = parse_event(&buffer, index + 1 < input.len()).unwrap() {
+                events.push(event);
+                buffer.clear();
+            }
+        }
+        assert_eq!(
+            events,
+            vec![
+                InternalEvent::Event(Event::ThemeChanged(crate::event::Theme::Dark)),
+                InternalEvent::Event(Event::Key(KeyCode::Char('j').into())),
+            ]
+        );
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn test_parse_unknown_private_status_reports() {
+        for report in [
+            &b"\x1B[?996;1n"[..],
+            b"\x1B[?997;3n",
+            b"\x1B[?997n",
+            b"\x1B[?997;1;2n",
+            b"\x1B[?n",
+        ] {
+            assert!(parse_event(report, false).is_err(), "{report:?}");
+        }
+        assert_eq!(parse_event(b"\x1B[?997;1", true).unwrap(), None);
+    }
 
     #[test]
     fn test_esc_key() {

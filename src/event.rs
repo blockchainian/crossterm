@@ -49,6 +49,7 @@
 //!         match read()? {
 //!             Event::FocusGained => println!("FocusGained"),
 //!             Event::FocusLost => println!("FocusLost"),
+//!             Event::ThemeChanged(theme) => println!("Theme: {:?}", theme),
 //!             Event::Key(event) => println!("{:?}", event),
 //!             Event::Mouse(event) => println!("{:?}", event),
 //!             #[cfg(feature = "bracketed-paste")]
@@ -95,6 +96,7 @@
 //!             match read()? {
 //!                 Event::FocusGained => println!("FocusGained"),
 //!                 Event::FocusLost => println!("FocusLost"),
+//!                 Event::ThemeChanged(theme) => println!("Theme: {:?}", theme),
 //!                 Event::Key(event) => println!("{:?}", event),
 //!                 Event::Mouse(event) => println!("{:?}", event),
 //!                 #[cfg(feature = "bracketed-paste")]
@@ -410,6 +412,39 @@ impl Command for DisableFocusChange {
     }
 }
 
+/// A command that enables terminal color theme change reports (DEC mode 2031).
+///
+/// Pair with [`DisableThemeChangeReports`] at the end of execution.
+/// Supporting terminals emit [`Event::ThemeChanged`] events.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EnableThemeChangeReports;
+
+impl Command for EnableThemeChangeReports {
+    fn write_ansi(&self, f: &mut impl fmt::Write) -> fmt::Result {
+        f.write_str(csi!("?2031h"))
+    }
+
+    #[cfg(windows)]
+    fn execute_winapi(&self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// A command that disables terminal color theme change reports (DEC mode 2031).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DisableThemeChangeReports;
+
+impl Command for DisableThemeChangeReports {
+    fn write_ansi(&self, f: &mut impl fmt::Write) -> fmt::Result {
+        f.write_str(csi!("?2031l"))
+    }
+
+    #[cfg(windows)]
+    fn execute_winapi(&self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 /// A command that enables [bracketed paste mode](https://en.wikipedia.org/wiki/Bracketed-paste).
 ///
 /// It should be paired with [`DisableBracketedPaste`] at the end of execution.
@@ -542,6 +577,17 @@ impl Command for PopKeyboardEnhancementFlags {
     }
 }
 
+/// The terminal's color theme.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "derive-more", derive(IsVariant))]
+#[derive(Debug, PartialOrd, PartialEq, Eq, Clone, Copy, Hash)]
+pub enum Theme {
+    /// A dark terminal background.
+    Dark,
+    /// A light terminal background.
+    Light,
+}
+
 /// Represents an event.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "derive-more", derive(IsVariant))]
@@ -563,6 +609,8 @@ pub enum Event {
     /// An resize event with new dimensions after resize (columns, rows).
     /// **Note** that resize events can occur in batches.
     Resize(u16, u16),
+    /// The terminal color theme changed. Requires [`EnableThemeChangeReports`].
+    ThemeChanged(Theme),
 }
 
 impl Event {
@@ -1488,6 +1536,29 @@ pub(crate) enum InternalEvent {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn theme_report_commands() {
+        use crate::Command;
+        let mut ansi = String::new();
+        super::EnableThemeChangeReports
+            .write_ansi(&mut ansi)
+            .unwrap();
+        super::DisableThemeChangeReports
+            .write_ansi(&mut ansi)
+            .unwrap();
+        assert_eq!(ansi, "\x1B[?2031h\x1B[?2031l");
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn theme_event_serde_round_trip() {
+        for theme in [super::Theme::Dark, super::Theme::Light] {
+            let event = super::Event::ThemeChanged(theme);
+            let json = serde_json::to_string(&event).unwrap();
+            assert_eq!(serde_json::from_str::<super::Event>(&json).unwrap(), event);
+        }
+    }
+
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
 

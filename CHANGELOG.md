@@ -1,5 +1,13 @@
 # Unreleased
 
+## Added ⭐
+
+- Add `Event::ThemeChanged(Theme)` and commands to enable and disable DEC mode 2031 theme change reports.
+
+## Fixed 🐛
+
+- Parse terminal theme reports without buffering and swallowing subsequent key events. Reject unknown private status reports.
+
 # Version 0.29
 
 ## Added ⭐
